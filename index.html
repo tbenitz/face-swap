@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Face Swap</title>
+<style>
+  :root {
+    --bg: #10110f;
+    --panel: #181a16;
+    --panel-2: #20231d;
+    --line: #31352c;
+    --text: #f3f1ea;
+    --muted: #9c998e;
+    --accent: #d6f25c;
+    --accent-ink: #1a2208;
+    --danger: #ff8d7a;
+    --ok: #b7e38a;
+    --shadow: 0 20px 50px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    display: flex; justify-content: space-between; gap: 16px; align-items: flex-end;
+    padding: 28px 32px 18px; border-bottom: 1px solid var(--line);
+  }
+  h1 { font: 500 28px/1 "Iowan Old Style", Palatino, Georgia, serif; margin: 0; letter-spacing: -.03em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 6px 0 0; max-width: 640px; }
+  .status {
+    font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted); text-align: right;
+  }
+  .status b { color: var(--ok); font-weight: 600; }
+  main { padding: 22px 32px 48px; max-width: 1180px; margin: 0 auto; }
+  .modes { display: flex; gap: 8px; margin-bottom: 16px; }
+  .modes button, .btn, .ghost {
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    border-radius: 999px; padding: 8px 14px; cursor: pointer; font: inherit;
+  }
+  .modes button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 650; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 14px;
+    min-height: 280px;
+  }
+  .panel h2 { margin: 2px 4px 10px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
+  .drop {
+    border: 1px dashed #4a4f42; border-radius: 14px; min-height: 220px;
+    display: grid; place-items: center; text-align: center; color: var(--muted);
+    background: #141612; position: relative; overflow: hidden; cursor: pointer;
+  }
+  .drop.hot { border-color: var(--accent); color: var(--text); }
+  .drop strong { color: var(--text); font-weight: 620; }
+  .drop input { display: none; }
+  .drop img, .drop video, .stage canvas {
+    width: 100%; height: auto; max-height: 420px; object-fit: contain; display: block; background: #0c0d0b;
+  }
+  .faces { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .face-chip {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    border-radius: 12px; padding: 4px; cursor: pointer; display: flex; gap: 8px; align-items: center;
+  }
+  .face-chip.active { border-color: var(--accent); }
+  .face-chip canvas { width: 44px; height: 44px; border-radius: 8px; background: #000; }
+  .face-chip span { font-size: 12px; padding-right: 6px; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: end;
+    margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel);
+  }
+  label.slider { display: grid; gap: 4px; min-width: 180px; font-size: 12px; color: var(--muted); }
+  label.slider input { width: 100%; accent-color: #c6e24e; }
+  label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .result { margin-top: 8px; }
+  .stage { background: #0c0d0b; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+  .stage canvas { width: 100%; height: auto; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 8px; }
+  progress { width: 180px; height: 8px; accent-color: #d6f25c; }
+  @media (max-width: 860px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Face <span>Swap</span></h1>
+    <p class="sub">Drop a source face onto a photo or video. Detection and warping stay in this browser tab. Nothing is uploaded.</p>
+  </div>
+  <div class="status" id="status">Loading face model…</div>
+</header>
+<main>
+  <div class="modes">
+    <button type="button" id="modeTransfer" class="active">Onto a photo or video</button>
+    <button type="button" id="modeMutual">Swap two faces in one photo</button>
+  </div>
+  <div class="grid">
+    <section class="panel">
+      <h2 id="sourceTitle">Source face</h2>
+      <label class="drop" id="sourceDrop">
+        <input id="sourceFile" type="file" accept="image/*" />
+        <div id="sourceEmpty"><strong>Drop a photo</strong><br>or click to choose the face to copy</div>
+        <img id="sourcePreview" alt="" hidden />
+      </label>
+      <div class="faces" id="sourceFaces"></div>
+    </section>
+    <section class="panel" id="targetPanel">
+      <h2>Target</h2>
+      <label class="drop" id="targetDrop">
+        <input id="targetFile" type="file" accept="image/*,video/*" />
+        <div id="targetEmpty"><strong>Drop a photo or video</strong><br>the face above lands on the face you pick here</div>
+        <img id="targetPreview" alt="" hidden />
+        <video id="targetVideo" hidden muted playsinline></video>
+      </label>
+      <div class="faces" id="targetFaces"></div>
+    </section>
+  </div>
+  <div class="controls">
+    <label class="slider">Blend <span id="blendVal">92%</span>
+      <input id="blend" type="range" min="40" max="100" value="92" />
+    </label>
+    <label class="slider">Edge feather <span id="featherVal">14px</span>
+      <input id="feather" type="range" min="2" max="36" value="14" />
+    </label>
+    <label class="slider">Max size <span id="sizeVal">1280px</span>
+      <input id="maxSize" type="range" min="640" max="1920" step="64" value="1280" />
+    </label>
+    <label class="check"><input id="colorMatch" type="checkbox" checked /> Match skin tone</label>
+    <label class="check"><input id="showMesh" type="checkbox" /> Show mesh</label>
+    <button class="btn primary" id="swapBtn" disabled>Swap faces</button>
+    <button class="btn" id="renderVideoBtn" hidden disabled>Render video</button>
+    <button class="btn ghost" id="cancelBtn" hidden>Stop</button>
+  </div>
+  <section class="panel result">
+    <h2>Result</h2>
+    <div class="stage"><canvas id="out"></canvas></div>
+    <div class="row">
+      <button class="btn" id="downloadBtn" disabled>Download</button>
+      <span id="progressWrap" hidden><progress id="progress" value="0" max="1"></progress> <span id="progressLabel"></span></span>
+    </div>
+    <div class="err" id="error"></div>
+    <p class="note">This is a landmark warp, not a neural deepfake. Front-facing faces of similar size and light look best. Profile shots, sunglasses, and hands over the face will miss. First open needs internet so the face model can download (~3 MB); after that the browser cache covers it. Video audio is kept in Chrome. Open this file in Chrome or Edge.</p>
+  </section>
+</main>
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/vision_bundle.mjs";
+
+const OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const EXTRA = [
+  33,160,158,133,153,144,163,7,246, 263,387,385,362,380,373,390,249,
+  70,63,105,66,107,55,65, 300,293,334,296,336,285,295,
+  61,146,91,181,84,17,314,405,321,375,291,78,95,88,178,87,14,317,402,318,324,308,
+  1,2,98,327,168,6,197,195,5,4,19,94,
+  151,9,8, 50,101,205,187,117,118, 280,330,425,411,346,347,
+  116,123,147,213,192, 345,352,376,433,416, 123,50,280,352
+];
+const IDS = [...new Set([...OVAL, ...EXTRA])];
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const errorEl = $("error");
+let landmarker = null;
+let mode = "transfer";
+let source = null;
+let target = null;
+let resultCanvas = $("out");
+let resultKind = "image";
+let recorder = null;
+let stopFlag = false;
+let videoUrl = null;
+
+function setStatus(text, ok) {
+  statusEl.innerHTML = ok ? `<b>${text}</b>` : text;
+}
+function setError(text) { errorEl.textContent = text || ""; }
+
+async function boot() {
+  try {
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/wasm"
+    );
+    const model = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+    try {
+      landmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: model, delegate: "GPU" },
+        runningMode: "IMAGE", numFaces: 6
+      });
+    } catch {
+      landmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: model, delegate: "CPU" },
+        runningMode: "IMAGE", numFaces: 6
+      });
+    }
+    setStatus("Model ready", true);
+    refreshButtons();
+  } catch (err) {
+    console.error(err);
+    setStatus("Model failed to load");
+    setError("Could not load the face model. Open this file in Chrome or Edge with internet. If it still fails, serve the folder (python -m http.server) and open the local URL. " + err.message);
+  }
+}
+
+function maxEdge() { return Number($("maxSize").value); }
+
+function fitSize(w, h) {
+  const m = maxEdge();
+  const s = Math.min(1, m / Math.max(w, h));
+  return { w: Math.max(2, Math.round(w * s)), h: Math.max(2, Math.round(h * s)), s };
+}
+
+async function fileToCanvas(file) {
+  const bmp = await createImageBitmap(file);
+  const { w, h } = fitSize(bmp.width, bmp.height);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(bmp, 0, 0, w, h);
+  bmp.close?.();
+  return c;
+}
+
+async function ensureImageMode() {
+  await landmarker.setOptions({ runningMode: "IMAGE" });
+}
+
+function detect(canvasOrVideo) {
+  const res = landmarker.detect(canvasOrVideo);
+  return res.faceLandmarks || [];
+}
+
+function lmPx(face, w, h) {
+  return face.map(p => ({ x: p.x * w, y: p.y * h, z: p.z || 0 }));
+}
+
+function faceBox(face, w, h) {
+  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+  for (const i of OVAL) {
+    const p = face[i];
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+  const padX = (maxX - minX) * 0.25, padY = (maxY - minY) * 0.28;
+  return {
+    x: Math.max(0, (minX - padX) * w),
+    y: Math.max(0, (minY - padY) * h),
+    w: Math.min(w, (maxX - minX + padX * 2) * w),
+    h: Math.min(h, (maxY - minY + padY * 2) * h)
+  };
+}
+
+function chip(face, canvas) {
+  const box = faceBox(face, canvas.width, canvas.height);
+  const c = document.createElement("canvas");
+  c.width = 88; c.height = 88;
+  c.getContext("2d").drawImage(canvas, box.x, box.y, box.w, box.h, 0, 0, 88, 88);
+  return c;
+}
+
+function renderChips(container, faces, canvas, selected, onPick) {
+  container.innerHTML = "";
+  faces.forEach((face, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "face-chip" + (i === selected ? " active" : "");
+    b.append(chip(face, canvas));
+    const s = document.createElement("span");
+    s.textContent = "Face " + (i + 1);
+    b.append(s);
+    b.onclick = () => onPick(i);
+    container.append(b);
+  });
+}
+
+function refreshButtons() {
+  const ready = !!landmarker;
+  const can = mode === "mutual"
+    ? ready && source && source.faces.length >= 2
+    : ready && source && target && source.faces.length && target.faces.length;
+  $("swapBtn").disabled = !can;
+  const videoOk = mode === "transfer" && target && target.kind === "video" && can;
+  $("renderVideoBtn").hidden = !(mode === "transfer" && target && target.kind === "video");
+  $("renderVideoBtn").disabled = !videoOk;
+}
+
+async function loadSource(file) {
+  setError("");
+  if (!landmarker) return;
+  await ensureImageMode();
+  const canvas = await fileToCanvas(file);
+  const faces = detect(canvas);
+  if (source && source.url) URL.revokeObjectURL(source.url);
+  source = { canvas, faces, selected: 0, url: URL.createObjectURL(file) };
+  $("sourceEmpty").hidden = true;
+  const img = $("sourcePreview");
+  img.hidden = false;
+  img.src = source.url;
+  if (!faces.length) setError("No face found in the source photo.");
+  renderChips($("sourceFaces"), faces, canvas, 0, pickSource);
+  refreshButtons();
+  if (mode === "mutual" && faces.length >= 2) swapStill();
+}
+
+function pickSource(i) {
+  source.selected = i;
+  renderChips($("sourceFaces"), source.faces, source.canvas, i, pickSource);
+}
+
+async function loadTarget(file) {
+  setError("");
+  if (!landmarker) return;
+  if (target && target.url) URL.revokeObjectURL(target.url);
+  const url = URL.createObjectURL(file);
+  $("targetEmpty").hidden = true;
+  if (file.type.startsWith("video/")) {
+    const video = $("targetVideo");
+    $("targetPreview").hidden = true;
+    video.hidden = false;
+    video.src = url;
+    await once(video, "loadeddata");
+    video.currentTime = Math.min(0.15, (video.duration || 1) / 10);
+    await once(video, "seeked");
+    await ensureImageMode();
+    const shot = frameCanvas(video);
+    const faces = detect(shot);
+    target = { kind: "video", video, canvas: shot, faces, selected: 0, url };
+    if (!faces.length) setError("No face found on the first frames of that video. Try another clip, or a clearer front-facing shot.");
+    renderChips($("targetFaces"), faces, shot, 0, pickTarget);
+  } else {
+    $("targetVideo").hidden = true;
+    const canvas = await fileToCanvas(file);
+    await ensureImageMode();
+    const faces = detect(canvas);
+    target = { kind: "image", canvas, faces, selected: 0, url };
+    const img = $("targetPreview");
+    img.hidden = false;
+    img.src = url;
+    if (!faces.length) setError("No face found in the target photo.");
+    renderChips($("targetFaces"), faces, canvas, 0, pickTarget);
+  }
+  refreshButtons();
+}
+
+function pickTarget(i) {
+  target.selected = i;
+  const canvas = target.canvas;
+  renderChips($("targetFaces"), target.faces, canvas, i, pickTarget);
+}
+
+function once(el, ev) {
+  return new Promise((resolve, reject) => {
+    const ok = () => { cleanup(); resolve(); };
+    const bad = () => { cleanup(); reject(new Error("Could not read that file")); };
+    const cleanup = () => { el.removeEventListener(ev, ok); el.removeEventListener("error", bad); };
+    el.addEventListener(ev, ok, { once: true });
+    el.addEventListener("error", bad, { once: true });
+  });
+}
+
+function frameCanvas(video) {
+  const { w, h } = fitSize(video.videoWidth, video.videoHeight);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(video, 0, 0, w, h);
+  return c;
+}
+
+function delaunay(pts) {
+  const n = pts.length;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+  const dx = maxX - minX || 1, dy = maxY - minY || 1, d = Math.max(dx, dy) * 4;
+  const all = pts.concat([
+    { x: minX - d, y: minY - d },
+    { x: minX + dx / 2, y: maxY + d * 2 },
+    { x: maxX + d, y: minY - d }
+  ]);
+  let tris = [[n, n + 1, n + 2]];
+  for (let i = 0; i < n; i++) {
+    const p = all[i];
+    const bad = [];
+    for (const t of tris) {
+      const cc = circum(all[t[0]], all[t[1]], all[t[2]]);
+      if (cc && (p.x - cc.x) ** 2 + (p.y - cc.y) ** 2 <= cc.r2 + 1e-4) bad.push(t);
+    }
+    const edges = new Map();
+    const key = (a, b) => a < b ? a + ":" + b : b + ":" + a;
+    for (const t of bad) {
+      for (const [a, b] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]) {
+        const k = key(a, b);
+        edges.set(k, (edges.get(k) || 0) + 1);
+      }
+    }
+    const badSet = new Set(bad);
+    tris = tris.filter(t => !badSet.has(t));
+    for (const t of bad) {
+      for (const [a, b] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]]) {
+        if (edges.get(key(a, b)) === 1) tris.push([a, b, i]);
+      }
+    }
+  }
+  return tris.filter(t => t[0] < n && t[1] < n && t[2] < n);
+}
+
+function circum(a, b, c) {
+  const D = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(D) < 1e-6) return null;
+  const ux = ((a.x * a.x + a.y * a.y) * (b.y - c.y) + (b.x * b.x + b.y * b.y) * (c.y - a.y) + (c.x * c.x + c.y * c.y) * (a.y - b.y)) / D;
+  const uy = ((a.x * a.x + a.y * a.y) * (c.x - b.x) + (b.x * b.x + b.y * b.y) * (a.x - c.x) + (c.x * c.x + c.y * c.y) * (b.x - a.x)) / D;
+  return { x: ux, y: uy, r2: (ux - a.x) ** 2 + (uy - a.y) ** 2 };
+}
+
+function affine(src, dst) {
+  const [s0, s1, s2] = src, [d0, d1, d2] = dst;
+  const den = s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
+  if (Math.abs(den) < 1e-4) return null;
+  return {
+    a: (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / den,
+    c: (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / den,
+    e: (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / den,
+    b: (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / den,
+    d: (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / den,
+    f: (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / den
+  };
+}
+
+function expand(tri, px) {
+  const cx = (tri[0].x + tri[1].x + tri[2].x) / 3;
+  const cy = (tri[0].y + tri[1].y + tri[2].y) / 3;
+  return tri.map(p => {
+    const dx = p.x - cx, dy = p.y - cy, len = Math.hypot(dx, dy) || 1;
+    return { x: p.x + dx / len * px, y: p.y + dy / len * px };
+  });
+}
+
+function pointInPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-6) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function ptsOf(facePx) {
+  return IDS.map(id => facePx[id] || facePx[0]);
+}
+
+function ovalOf(facePx) {
+  return OVAL.map(id => facePx[id]);
+}
+
+function warpFace(srcCanvas, srcFace, dstCanvas, dstFace) {
+  const sw = srcCanvas.width, sh = srcCanvas.height, dw = dstCanvas.width, dh = dstCanvas.height;
+  const srcPx = lmPx(srcFace, sw, sh);
+  const dstPx = lmPx(dstFace, dw, dh);
+  const srcPts = ptsOf(srcPx);
+  const dstPts = ptsOf(dstPx);
+  const oval = ovalOf(dstPx);
+  const tris = delaunay(dstPts).filter(t => {
+    const a = dstPts[t[0]], b = dstPts[t[1]], c = dstPts[t[2]];
+    const area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+    if (area < 8) return false;
+    return pointInPoly((a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3, oval);
+  });
+  const warped = document.createElement("canvas");
+  warped.width = dw; warped.height = dh;
+  const ctx = warped.getContext("2d");
+  for (const t of tris) {
+    const s = [srcPts[t[0]], srcPts[t[1]], srcPts[t[2]]];
+    const d = expand([dstPts[t[0]], dstPts[t[1]], dstPts[t[2]]], 0.75);
+    const m = affine(s, d);
+    if (!m) continue;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(d[0].x, d[0].y); ctx.lineTo(d[1].x, d[1].y); ctx.lineTo(d[2].x, d[2].y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+    ctx.drawImage(srcCanvas, 0, 0);
+    ctx.restore();
+  }
+  return { warped, oval, dstPx };
+}
+
+function colorMatch(warped, base, oval, amount) {
+  const w = warped.width, h = warped.height;
+  const mask = document.createElement("canvas");
+  mask.width = w; mask.height = h;
+  const mctx = mask.getContext("2d");
+  mctx.fillStyle = "#fff";
+  mctx.beginPath();
+  oval.forEach((p, i) => i ? mctx.lineTo(p.x, p.y) : mctx.moveTo(p.x, p.y));
+  mctx.closePath();
+  mctx.fill();
+  const md = mctx.getImageData(0, 0, w, h).data;
+  const sd = warped.getContext("2d").getImageData(0, 0, w, h);
+  const bd = base.getContext("2d").getImageData(0, 0, w, h).data;
+  let sr = 0, sg = 0, sb = 0, dr = 0, dg = 0, db = 0, n = 0;
+  const step = w * h > 800000 ? 6 : 3;
+  for (let i = 0; i < md.length; i += 4 * step) {
+    if (md[i] < 128 || sd.data[i + 3] < 20) continue;
+    sr += sd.data[i]; sg += sd.data[i + 1]; sb += sd.data[i + 2];
+    dr += bd[i]; dg += bd[i + 1]; db += bd[i + 2];
+    n++;
+  }
+  if (!n) return warped;
+  sr /= n; sg /= n; sb /= n; dr /= n; dg /= n; db /= n;
+  const data = sd.data;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 8) continue;
+    data[i] = clamp(data[i] + (dr - sr) * amount);
+    data[i + 1] = clamp(data[i + 1] + (dg - sg) * amount);
+    data[i + 2] = clamp(data[i + 2] + (db - sb) * amount);
+  }
+  warped.getContext("2d").putImageData(sd, 0, 0);
+  return warped;
+}
+
+function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+function makeMask(w, h, oval, feather) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  oval.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.fill();
+  const soft = document.createElement("canvas");
+  soft.width = w; soft.height = h;
+  const g = soft.getContext("2d");
+  g.filter = `blur(${feather}px)`;
+  g.drawImage(c, 0, 0);
+  return soft;
+}
+
+function composite(base, srcCanvas, srcFace, dstFace, opts) {
+  const out = document.createElement("canvas");
+  out.width = base.width; out.height = base.height;
+  const ctx = out.getContext("2d");
+  ctx.drawImage(base, 0, 0);
+  const { warped, oval, dstPx } = warpFace(srcCanvas, srcFace, base, dstFace);
+  if ($("colorMatch").checked) colorMatch(warped, base, oval, 0.85);
+  const mask = makeMask(base.width, base.height, oval, opts.feather);
+  const layer = document.createElement("canvas");
+  layer.width = base.width; layer.height = base.height;
+  const lctx = layer.getContext("2d");
+  lctx.drawImage(warped, 0, 0);
+  lctx.globalCompositeOperation = "destination-in";
+  lctx.drawImage(mask, 0, 0);
+  ctx.globalAlpha = opts.blend;
+  ctx.drawImage(layer, 0, 0);
+  ctx.globalAlpha = 1;
+  if (opts.mesh) drawMesh(ctx, dstPx);
+  return out;
+}
+
+function drawMesh(ctx, facePx) {
+  const oval = ovalOf(facePx);
+  ctx.save();
+  ctx.strokeStyle = "rgba(214,242,92,.8)";
+  ctx.lineWidth = 1.25;
+  ctx.beginPath();
+  oval.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.fillStyle = "rgba(214,242,92,.9)";
+  for (const id of [33, 263, 1, 13, 14, 152]) {
+    const p = facePx[id];
+    if (!p) continue;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function opts() {
+  return { blend: Number($("blend").value) / 100, feather: Number($("feather").value), mesh: $("showMesh").checked };
+}
+
+function showResult(canvas) {
+  resultCanvas.width = canvas.width;
+  resultCanvas.height = canvas.height;
+  resultCanvas.getContext("2d").drawImage(canvas, 0, 0);
+  resultKind = "image";
+  $("downloadBtn").disabled = false;
+}
+
+function swapStill() {
+  setError("");
+  ensureImageMode().then(() => {
+    try {
+      const o = opts();
+      if (mode === "mutual") {
+        if (!source || source.faces.length < 2) return setError("Need a photo with at least two faces.");
+        const a = source.selected;
+        const b = source.faces.findIndex((_, i) => i !== a);
+        const base = source.canvas;
+        let out = composite(base, base, source.faces[b], source.faces[a], o);
+        out = composite(out, base, source.faces[a], source.faces[b], o);
+        showResult(out);
+        return;
+      }
+      if (!source || !target) return;
+      const base = target.kind === "video" ? frameCanvas(target.video) : target.canvas;
+      if (target.kind === "video") {
+        const faces = detect(base);
+        if (!faces.length) return setError("No face in this video frame.");
+        target.faces = faces;
+        renderChips($("targetFaces"), faces, base, Math.min(target.selected, faces.length - 1), pickTarget);
+      }
+      const dstFace = target.faces[Math.min(target.selected, target.faces.length - 1)];
+      const srcFace = source.faces[source.selected];
+      showResult(composite(base, source.canvas, srcFace, dstFace, o));
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Swap failed");
+    }
+  }).catch(err => setError(err.message || "Swap failed"));
+}
+
+async function renderVideo() {
+  if (!target || target.kind !== "video") return;
+  setError("");
+  stopFlag = false;
+  $("cancelBtn").hidden = false;
+  $("renderVideoBtn").disabled = true;
+  $("swapBtn").disabled = true;
+  const video = target.video;
+  await landmarker.setOptions({ runningMode: "VIDEO" });
+  video.pause();
+  video.currentTime = 0;
+  await once(video, "seeked");
+  const { w, h } = fitSize(video.videoWidth, video.videoHeight);
+  const canvas = resultCanvas;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const frame = document.createElement("canvas");
+  frame.width = w; frame.height = h;
+  const fctx = frame.getContext("2d");
+  const stream = canvas.captureStream(30);
+  try {
+    const audio = video.captureStream().getAudioTracks();
+    if (audio[0]) stream.addTrack(audio[0]);
+  } catch { /* audio optional */ }
+  const mime = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find(t => MediaRecorder.isTypeSupported(t)) || "";
+  recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const done = new Promise(resolve => { recorder.onstop = resolve; });
+  recorder.start(200);
+  $("progressWrap").hidden = false;
+  let ts = 0;
+  let smoothFace = null;
+  const srcFace = source.faces[source.selected];
+  const o = opts();
+  video.playbackRate = 1;
+  await video.play();
+  await new Promise((resolve) => {
+    const tick = () => {
+      if (stopFlag || video.ended) return resolve();
+      fctx.drawImage(video, 0, 0, w, h);
+      ts = Math.max(ts + 1, video.currentTime * 1000);
+      const res = landmarker.detectForVideo(video, ts);
+      const faces = res.faceLandmarks || [];
+      if (faces.length) {
+        let face = faces[0];
+        if (smoothFace) {
+          let best = 0, bestD = Infinity;
+          const prev = smoothFace[1] || smoothFace[0];
+          faces.forEach((f, i) => {
+            const q = f[1] || f[0];
+            const d = (q.x - prev.x) ** 2 + (q.y - prev.y) ** 2;
+            if (d < bestD) { bestD = d; best = i; }
+          });
+          face = faces[best].map((p, i) => ({
+            x: smoothFace[i].x * 0.55 + p.x * 0.45,
+            y: smoothFace[i].y * 0.55 + p.y * 0.45,
+            z: p.z
+          }));
+        }
+        smoothFace = face;
+        const swapped = composite(frame, source.canvas, srcFace, face, o);
+        ctx.drawImage(swapped, 0, 0);
+      } else {
+        ctx.drawImage(frame, 0, 0);
+      }
+      const dur = video.duration || 1;
+      $("progress").value = video.currentTime / dur;
+      $("progressLabel").textContent = Math.round(video.currentTime / dur * 100) + "%";
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  video.pause();
+  recorder.stop();
+  await done;
+  if (videoUrl) URL.revokeObjectURL(videoUrl);
+  const blob = new Blob(chunks, { type: mime || "video/webm" });
+  videoUrl = URL.createObjectURL(blob);
+  resultKind = "video";
+  $("downloadBtn").disabled = false;
+  $("progressLabel").textContent = stopFlag ? "Stopped — partial video ready" : "Done";
+  $("cancelBtn").hidden = true;
+  $("renderVideoBtn").disabled = false;
+  $("swapBtn").disabled = false;
+  await ensureImageMode();
+}
+
+function download() {
+  if (resultKind === "video" && videoUrl) {
+    const a = document.createElement("a");
+    a.href = videoUrl;
+    a.download = "face-swap.webm";
+    a.click();
+    return;
+  }
+  resultCanvas.toBlob((blob) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "face-swap.png";
+    a.click();
+  }, "image/png");
+}
+
+function bindDrop(zone, input, handler) {
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("hot"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("hot"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("hot");
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) handler(file);
+  });
+  input.addEventListener("change", () => {
+    if (input.files[0]) handler(input.files[0]);
+  });
+}
+
+$("modeTransfer").onclick = () => {
+  mode = "transfer";
+  $("modeTransfer").classList.add("active");
+  $("modeMutual").classList.remove("active");
+  $("targetPanel").style.display = "";
+  $("sourceTitle").textContent = "Source face";
+  refreshButtons();
+};
+$("modeMutual").onclick = () => {
+  mode = "mutual";
+  $("modeMutual").classList.add("active");
+  $("modeTransfer").classList.remove("active");
+  $("targetPanel").style.display = "none";
+  $("sourceTitle").textContent = "Photo with two faces";
+  $("renderVideoBtn").hidden = true;
+  refreshButtons();
+};
+$("blend").oninput = () => { $("blendVal").textContent = $("blend").value + "%"; };
+$("feather").oninput = () => { $("featherVal").textContent = $("feather").value + "px"; };
+$("maxSize").oninput = () => { $("sizeVal").textContent = $("maxSize").value + "px"; };
+$("swapBtn").onclick = swapStill;
+$("renderVideoBtn").onclick = () => renderVideo().catch(err => { setError(err.message); $("cancelBtn").hidden = true; });
+$("cancelBtn").onclick = () => { stopFlag = true; target?.video?.pause(); };
+$("downloadBtn").onclick = download;
+bindDrop($("sourceDrop"), $("sourceFile"), loadSource);
+bindDrop($("targetDrop"), $("targetFile"), loadTarget);
+
+boot();
+</script>
+</body>
+</html>
